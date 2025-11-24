@@ -11,23 +11,29 @@
             padding: 0;
             overflow: hidden;
         }
-        body { 
-            text-align: center; 
-            background: #f10606;
-            color: #c801fa; 
-            width: 1000px;
-            height: 500px;
+        body {
+            text-align: center;
+            background: #00464b;
+            color: #c801fa;
+            width: 100%;
+            height: 100%;
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            display: flex;
+            align-items: center;
+            justify-content: center;
         }
-        canvas { 
-            background: transparent;
+        canvas {
+            /* canvas size will be controlled from JS to keep a 9:16 aspect ratio */
+            background: #4d06f1;
             margin: 0;
             position: absolute;
-            top: 0;
-            left: 0;
-            width: 100% ;
-            height: 700px;
             display: block;
-            background: #4d06f1;
+            will-change: width, height, transform;
+            image-rendering: optimizeSpeed;
+            border-radius: 6px;
+            box-shadow: 0 4px 12px rgb(255, 0, 0);
         }
         h1 { font-family: Arial, sans-serif; }
         button { padding: 10px 20px; font-size: 16px; cursor: pointer;  background: #333; color: #fff; border: none; border-radius: 5px; }
@@ -50,11 +56,25 @@
             background: #333;
             color: #fff;
             border: none;
+            outline: none;
+            box-shadow: none;
+            transition: background 0.3s, transform 0.2s;
+            display: inline-block;
+            text-align: center;
+            line-height: 60px; /* Tugma ichidagi matnni markazlash */
+            font-family: Arial, sans-serif;
+            font-weight: bold;
+            border: 2px solid #fff; /* Tugma chegarasi */
+            border-top: none;
+            border-left: none;
+            border-right: none;
             border-radius: 5px;
         }
         #controls button:hover {
             background: #444;
             color: #fff;
+            transform: scale(1.1);
+
         }
     </style>
 </head>
@@ -63,65 +83,132 @@
     <button id="restart" style="display:none; margin-top:10px;">Qayta boshlash</button>
 
     <div id="controls">
-        <button id="up">⬆️</button><br>
-        <button id="left">⬅️</button>
-        <button id="down">⬇️</button>
-        <button id="right">➡️</button>
+        <button id="up">⬆</button><br>
+        <button id="left">⬅</button>
+        <button id="down">⬇</button>
+        <button id="right">➡</button>
     </div>
 
     <script>
         const canvas = document.getElementById('game');
         const ctx = canvas.getContext('2d');
-        const grid = 40; // Ilon va olma kattaligi oshadi
-        let snake, dx, dy, food, score, gameOver;
+    const grid = 40; // Ilon va olma kattaligi (pixel per cell)
+    // innerScale controls how much smaller the playable area is vs the canvas (0.0-1.0)
+    const innerScale = 0.78; // 78% of canvas will be used for the playable area
+    let gameArea = { x: 0, y: 0, width: 0, height: 0 }; // computed in resizeCanvas
+    let snake, dx, dy, food, score, gameOver;
 
         const snakeHeads = [
             'https://upload.wikimedia.org/wikipedia/commons/thumb/f/fb/Minecraft-creeper-face.jpg/500px-Minecraft-creeper-face.jpg',
             'https://mc-heads.net/avatar/MHF_Steve',
             'https://i.pinimg.com/236x/dc/da/6b/dcda6bb4bac8a551c7deea5a45a23bbd.jpg',
             'https://d31sxl6qgne2yj.cloudfront.net/wordpress/wp-content/uploads/20190121140743/Minecraft-Wither-Skeleton-Head.jpg',
-            'https://minecraftfaces.com/wp-content/bigfaces/big-enderdragon-face.png'
+            'https://minecraftfaces.com/wp-content/bigfaces/big-enderdragon-face.png',
+            'https://i.pinimg.com/736x/96/c9/bd/96c9bd41d83e8407c4c44371d61ab314.jpg',
+            'https://minotar.net/helm/069a79f444e94726a5befca90e38aaf5/512.png',
+            'https://mc-heads.net/avatar/2d7552678058720f8920bcee682ac4e7475e41e2155ae6700b2a58389f5b64f6',
+            'https://i.pinimg.com/736x/0a/c2/51/0ac2513840da22b25b4e91ec57c90ffd.jpg',
+            'https://tse1.mm.bing.net/th/id/OIP.1PfVKP2YWs0lTLvKoVu2VQHaHf?rs=1&pid=ImgDetMain&o=7&rm=3'
         ];
         const apples = [
             'https://static.wikia.nocookie.net/minecraft_gamepedia/images/5/54/Golden_Apple_JE2_BE2.png',
         ];
-        let headImg = new Image();
-        let appleImg = new Image();
+    let headImg = new Image();
+    let appleImg = new Image();
+    // flags to know if images loaded successfully
+    headImg._loaded = false;
+    appleImg._loaded = false;
+    headImg.onload = function() { headImg._loaded = true; };
+    headImg.onerror = function() { headImg._loaded = false; console.warn('Head image failed to load:', headImg.src); };
+    appleImg.onload = function() { appleImg._loaded = true; };
+    appleImg.onerror = function() { appleImg._loaded = false; console.warn('Apple image failed to load:', appleImg.src); };
         let currentHead = 0;
         let currentApple = 0;
         const tailColors = [
-            'lime', 'blue', '#fff', '#555555', '#c801fa'
+            'lime', 'blue', '#fff', '#555555', '#c801fa', 'pink', 'brown', 'blueviolet', 'yellow', 'green', 'orange', 
         ];
         let currentTailColor = 0;
 
         function initGame() {
-            snake = [{x: 200, y: 200}];
+            // Ensure gameArea is computed
+            resizeCanvas();
+
+            // start snake in center of the playable gameArea, snapped to grid
+            const startCol = Math.floor((gameArea.width / 2) / grid);
+            const startRow = Math.floor((gameArea.height / 2) / grid);
+            const startX = gameArea.x + startCol * grid;
+            const startY = gameArea.y + startRow * grid;
+            snake = [{x: startX, y: startY}];
+
             dx = grid; dy = 0;
             food = {x: 0, y: 0};
             score = 0;
             gameOver = false;
+            // choose random head, apple and tail color at start
+            currentHead = Math.floor(Math.random() * snakeHeads.length);
+            currentApple = Math.floor(Math.random() * apples.length);
+            currentTailColor = Math.floor(Math.random() * tailColors.length);
             placeFood();
             document.getElementById('restart').style.display = 'none';
         }
 
         // Canvasni oynaga moslashtirish
         function resizeCanvas() {
-            canvas.width = window.innerWidth;
-            canvas.height = window.innerHeight;
+            // Desired aspect ratio (width : height) = 9 : 16 (portrait phone)
+            const targetRatio = 9 / 16;
+            const vw = window.innerWidth;
+            const vh = window.innerHeight;
+
+            // Fit the largest 9:16 rectangle inside the viewport
+            let w = vw;
+            let h = Math.round(w / targetRatio);
+            if (h > vh) {
+                h = vh;
+                w = Math.round(h * targetRatio);
+            }
+
+            canvas.width = w;
+            canvas.height = h;
+
+            // Center the canvas in the viewport
+            canvas.style.left = Math.round((vw - w) / 2) + 'px';
+            canvas.style.top = Math.round((vh - h) / 2) + 'px';
+            canvas.style.width = w + 'px';
+            canvas.style.height = h + 'px';
+
+            // compute inner playable area (snapped to grid)
+            const maxInnerCols = Math.floor((w * innerScale) / grid);
+            const maxInnerRows = Math.floor((h * innerScale) / grid);
+            const gameWidth = Math.max(1, maxInnerCols) * grid;
+            const gameHeight = Math.max(1, maxInnerRows) * grid;
+            const canvasLeft = parseInt(canvas.style.left || '0', 10);
+            const canvasTop = parseInt(canvas.style.top || '0', 10);
+            const gameX = canvasLeft + Math.round((w - gameWidth) / 2);
+            const gameY = canvasTop + Math.round((h - gameHeight) / 2);
+            // store as absolute coordinates within the viewport
+            gameArea = { x: gameX, y: gameY, width: gameWidth, height: gameHeight };
         }
         window.addEventListener('resize', resizeCanvas);
         resizeCanvas();
 
         function placeFood() {
-            food.x = Math.floor(Math.random() * (canvas.width / grid)) * grid;
-            food.y = Math.floor(Math.random() * (canvas.height / grid)) * grid;
+            // place food inside the inner playable area (gameArea)
+            const cols = Math.floor(gameArea.width / grid);
+            const rows = Math.floor(gameArea.height / grid);
+            const col = Math.floor(Math.random() * cols);
+            const row = Math.floor(Math.random() * rows);
+            food.x = gameArea.x + col * grid;
+            food.y = gameArea.y + row * grid;
             // Olma har safar joylashganda rasmni yangilash
             updateImages();
         }
 
         function updateImages() {
-            headImg.src = snakeHeads[currentHead];
-            appleImg.src = apples[currentApple];
+            // Reset the loaded flags before changing source
+            headImg._loaded = false;
+            appleImg._loaded = false;
+            headImg.src = snakeHeads[currentHead] || '';
+            appleImg.src = apples[currentApple] || '';
         }
         updateImages();
 
@@ -136,13 +223,19 @@
                 ctx.font = '30px Arial';
                 ctx.fillText('Ball: ' + score, canvas.width/2 - 60, canvas.height/2 + 30);
 
-                // Tugmalarni ko‘rsatish
                 const restartBtn = document.getElementById('restart');
+                // #no-btn may not exist in the DOM; guard against null to avoid runtime errors
                 const noBtn = document.getElementById('no-btn');
-                restartBtn.style.display = 'inline-block';
-                restartBtn.style.position = 'absolute';
-                restartBtn.style.left = (canvas.offsetLeft + canvas.width/2 - restartBtn.offsetWidth/2) + 'px';
-                restartBtn.style.top = (canvas.offsetTop + canvas.height/2 + 60) + 'px';
+                if (restartBtn) {
+                    restartBtn.style.display = 'inline-block';
+                    restartBtn.style.position = 'absolute';
+                    restartBtn.style.left = (canvas.offsetLeft + canvas.width/2 - restartBtn.offsetWidth/2) + 'px';
+                    restartBtn.style.top = (canvas.offsetTop + canvas.height/2 + 60) + 'px';
+                }
+                if (noBtn) {
+                    // If a "no" button is present, show it as well (safe to leave out otherwise)
+                    noBtn.style.display = 'inline-block';
+                }
 
                 return;
             }
@@ -159,38 +252,71 @@
                 snake.pop();
             }
 
+            // collision with inner gameArea bounds or self
             if (
-                head.x < 0 || head.x >= canvas.width ||
-                head.y < 0 || head.y >= canvas.height ||
+                head.x < gameArea.x || head.x >= (gameArea.x + gameArea.width) ||
+                head.y < gameArea.y || head.y >= (gameArea.y + gameArea.height) ||
                 snake.slice(1).some(s => s.x === head.x && s.y === head.y)
             ) {
                 gameOver = true;
             }
 
+            // clear full canvas
             ctx.fillStyle = '#000';
             ctx.fillRect(0, 0, canvas.width, canvas.height);
 
+            // draw the inner playable area background (slightly lighter)
+            ctx.fillStyle = '#0b0b2b';
+            // convert gameArea absolute coords to canvas-space by subtracting canvas position
+            const canvasLeft = parseInt(canvas.style.left || '0', 10);
+            const canvasTop = parseInt(canvas.style.top || '0', 10);
+            const areaX = gameArea.x - canvasLeft;
+            const areaY = gameArea.y - canvasTop;
+            ctx.fillRect(areaX, areaY, gameArea.width, gameArea.height);
+
             // Ilon tanasi (dum)
             ctx.fillStyle = tailColors[currentTailColor];
-            snake.slice(1).forEach(s => ctx.fillRect(s.x, s.y, grid, grid));
+            snake.slice(1).forEach(s => ctx.fillRect(s.x - canvasLeft, s.y - canvasTop, grid, grid));
 
-            // Ilon boshiga rasm
-            ctx.drawImage(headImg, snake[0].x, snake[0].y, grid, grid);
+            // Ilon boshiga rasm (use fallback if image didn't load)
+            if (headImg._loaded) {
+                try { ctx.drawImage(headImg, snake[0].x - canvasLeft, snake[0].y - canvasTop, grid, grid); } catch (e) { /* ignore draw errors */ }
+            } else {
+                // fallback: draw a colored square with an H letter
+                ctx.fillStyle = '#ff0';
+                ctx.fillRect(snake[0].x - canvasLeft, snake[0].y - canvasTop, grid, grid);
+                ctx.fillStyle = '#000';
+                ctx.font = Math.max(12, Math.round(grid * 0.5)) + 'px Arial';
+                ctx.fillText('H', snake[0].x - canvasLeft + grid/4, snake[0].y - canvasTop + grid*0.7);
+            }
 
-            // Ovqat (olma) rasm
-            ctx.drawImage(appleImg, food.x, food.y, grid, grid);
+            // Ovqat (olma) rasm (use fallback if image didn't load)
+            if (appleImg._loaded) {
+                try { ctx.drawImage(appleImg, food.x - canvasLeft, food.y - canvasTop, grid, grid); } catch (e) { /* ignore draw errors */ }
+            } else {
+                ctx.fillStyle = 'red';
+                ctx.beginPath();
+                ctx.arc(food.x - canvasLeft + grid/2, food.y - canvasTop + grid/2, grid/2 - 4, 0, Math.PI * 2);
+                ctx.fill();
+            }
 
             ctx.fillStyle = '#fff';
-            ctx.font = '20px Arial';
-            ctx.fillText('Ball: ' + score, 10, 390);
+            // scale font relative to canvas height for better phone readability
+            const fontSize = Math.max(14, Math.round(canvas.height * 0.045));
+            ctx.font = fontSize + 'px Arial';
+            // draw score inside the game area (bottom-left of inner area)
+            const scoreX = areaX + 8;
+            const scoreY = areaY + gameArea.height - Math.round(gameArea.height * 0.06);
+            ctx.fillText('Ball: ' + score, scoreX, scoreY);
         }
 
         // Ball oshganda rasmni o'zgartirish
         function checkScoreChange() {
-            if (score > 0 && score % 5 === 0) {
-                currentHead = (currentHead + 1) % snakeHeads.length;
-                currentApple = (currentApple + 1) % apples.length;
-                currentTailColor = (currentTailColor + 1) % tailColors.length;
+            if (score > 0 && score % 3 === 0) {
+                // pick random new head/apple/tail color (allowing same index occasionally)
+                currentHead = Math.floor(Math.random() * snakeHeads.length);
+                currentApple = Math.floor(Math.random() * apples.length);
+                currentTailColor = Math.floor(Math.random() * tailColors.length);
                 updateImages();
             }
         }
@@ -226,7 +352,9 @@
 
         document.getElementById('restart').onclick = function() {
             initGame();
-            document.getElementById('no-btn').style.display = 'none';
+            // hide #no-btn if it exists
+            const noBtn = document.getElementById('no-btn');
+            if (noBtn) noBtn.style.display = 'none';
         };
 
         // Boshqaruv tugmalari
@@ -243,8 +371,11 @@
             if (dx === 0) { dx = grid; dy = 0; }
         };
 
-        initGame();
-        setInterval(gameLoop, 150);
+    initGame();
+    // gameInterval controls game speed in milliseconds (higher = slower)
+    let gameInterval = 400; // was 150
+    // start main loop
+    const gameTimer = setInterval(gameLoop, gameInterval);
     </script>
 </body>
 </html>
